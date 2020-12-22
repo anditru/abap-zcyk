@@ -411,16 +411,25 @@ MODULE screen_0100_user_command INPUT.
   DATA:
         lt_terminals TYPE TABLE OF ts_symbol_list,
         lt_nonterminals TYPE TABLE OF ts_symbol_list,
+        lt_word TYPE TABLE OF ts_symbol_list,
         lt_pyramid TYPE TABLE OF ts_matrix,
         lt_productions TYPE HASHED TABLE OF ts_production
           WITH UNIQUE KEY primary_key COMPONENTS generates nonterminal
           WITH NON-UNIQUE SORTED KEY secondary_key COMPONENTS generates,
+        ls_word TYPE ts_symbol_list,
+        ls_nonterminal TYPE ts_symbol_list,
         ls_pyramid_line TYPE ts_matrix,
         ls_production_global LIKE LINE OF gt_productions,
         ls_production TYPE ts_production,
         lv_word_length TYPE i,
         lv_line TYPE i,
-        lv_column TYPE i.
+        lv_column TYPE i,
+        lv_current_char TYPE char1,
+        lv_count TYPE i.
+
+  FIELD-SYMBOLS:
+                 <fs_pyramid_line> LIKE ls_pyramid_line,
+                 <fs_production> LIKE ls_production.
 
   CASE sy-ucomm.
   WHEN 'CHECK_WORD'.
@@ -434,6 +443,13 @@ MODULE screen_0100_user_command INPUT.
     READ TABLE lt_nonterminals WITH KEY symbol = gs_grammar-io_start_symbol TRANSPORTING NO FIELDS.
     ASSERT sy-subrc = 0.
 
+    "Get word to check
+    lv_word_length = strlen( io_word_to_check ).
+    DO lv_word_length TIMES.
+      ls_word-symbol = substring( val = io_word_to_check off = sy-index - 1 len = 1 ).
+      APPEND ls_word TO lt_word.
+    ENDDO.
+
     "Get productions and remove shit
     LOOP AT gt_productions INTO ls_production_global.
       IF ls_production_global IS NOT INITIAL.
@@ -443,7 +459,6 @@ MODULE screen_0100_user_command INPUT.
     ENDLOOP.
 
     "Initialize pyramid
-    lv_word_length = strlen( io_word_to_check ).
     lv_line = 0.
     lv_column = 0.
     DO lv_word_length TIMES.
@@ -453,13 +468,31 @@ MODULE screen_0100_user_command INPUT.
         APPEND ls_pyramid_line TO lt_pyramid.
         lv_column = lv_column + 1.
       ENDDO.
+      lv_column = 0.
       lv_line = lv_line + 1.
     ENDDO.
 
-    "Fill bottom line of pyramid
-    LOOP AT lt_pyramid INTO ls_pyramid_line WHERE column = 0.
+    CLEAR ls_word.
 
+    "Fill bottom line of pyramid
+    lv_count = 1.
+    LOOP AT lt_pyramid ASSIGNING <fs_pyramid_line> WHERE column = 0.
+      READ TABLE lt_word INDEX lv_count INTO ls_word.
+      LOOP AT lt_productions ASSIGNING <fs_production> USING KEY secondary_key WHERE generates = ls_word-symbol.
+        ls_nonterminal-symbol = <fs_production>-nonterminal.
+        APPEND ls_nonterminal TO <fs_pyramid_line>-values.
+      ENDLOOP.
+      lv_count = lv_count + 1.
     ENDLOOP.
+
+    lv_count = 0.
+
+    "Clear everything
+    CLEAR:
+      lt_word,
+      lt_terminals,
+      lt_productions,
+      lt_pyramid.
 
   ENDCASE.
 ENDMODULE.
