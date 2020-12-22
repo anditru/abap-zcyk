@@ -26,7 +26,7 @@ ENDMODULE.
 *&SPWIZARD: UPDATE LINES FOR EQUIVALENT SCROLLBAR
 MODULE t_productions_change_tc_attr OUTPUT.
   IF gt_productions IS INITIAL.
-* Fill gt_productions with empty lines because the table control wizard is stupid
+* Fill gt_productions with empty lines because the table control wizard is stupid or maybe I am stupid
     DO 6 TIMES.
       APPEND gs_wa_productions TO gt_productions.
     ENDDO.
@@ -387,6 +387,7 @@ FORM fcode_tc_demark_lines USING p_tc_name
     <mark_field> = space.
   ENDLOOP.
 ENDFORM.                                          "fcode_tc_mark_lines
+
 *&---------------------------------------------------------------------*
 *&      Module  SCREEN_0100_USER_COMMAND  INPUT
 *&---------------------------------------------------------------------*
@@ -409,49 +410,40 @@ MODULE screen_0100_user_command INPUT.
          END OF ts_production.
 
   DATA:
-        lt_terminals TYPE TABLE OF ts_symbol_list,
-        lt_nonterminals TYPE TABLE OF ts_symbol_list,
-        lt_word TYPE TABLE OF ts_symbol_list,
-        lt_pyramid TYPE TABLE OF ts_matrix,
-        lt_productions TYPE HASHED TABLE OF ts_production
-          WITH UNIQUE KEY primary_key COMPONENTS generates nonterminal
-          WITH NON-UNIQUE SORTED KEY secondary_key COMPONENTS generates,
-        ls_word TYPE ts_symbol_list,
-        ls_nonterminal TYPE ts_symbol_list,
-        ls_pyramid_line TYPE ts_matrix,
-        ls_production_global LIKE LINE OF gt_productions,
-        ls_production TYPE ts_production,
-        lv_word_length TYPE i,
-        lv_line TYPE i,
-        lv_column TYPE i,
-        lv_current_char TYPE char1,
-        lv_count TYPE i.
+        lt_wa TYPE TABLE OF ts_symbol_list,
+        lt_combinations TYPE TABLE OF ts_symbol_list.
 
-  FIELD-SYMBOLS:
-                 <fs_pyramid_line> LIKE ls_pyramid_line,
-                 <fs_production> LIKE ls_production.
 
   CASE sy-ucomm.
   WHEN 'CHECK_WORD'.
     "Get terminals
-    SPLIT gs_grammar-io_terminals AT ' ' INTO TABLE lt_terminals IN CHARACTER MODE.
+    DATA lt_terminals TYPE TABLE OF ts_symbol_list.
+    SPLIT gs_grammar-io_terminals AT ' ' INTO TABLE lt_terminals.
 
     "Get nonterminals
-    SPLIT gs_grammar-io_nonterminals AT ' ' INTO TABLE lt_nonterminals IN CHARACTER MODE.
+    DATA lt_nonterminals TYPE TABLE OF ts_symbol_list.
+    SPLIT gs_grammar-io_nonterminals AT ' ' INTO TABLE lt_nonterminals.
 
     "Check validty to start symbol
     READ TABLE lt_nonterminals WITH KEY symbol = gs_grammar-io_start_symbol TRANSPORTING NO FIELDS.
     ASSERT sy-subrc = 0.
 
     "Get word to check
-    lv_word_length = strlen( io_word_to_check ).
-    DO lv_word_length TIMES.
-      ls_word-symbol = substring( val = io_word_to_check off = sy-index - 1 len = 1 ).
-      APPEND ls_word TO lt_word.
+    DATA(lv_n) = strlen( io_word_to_check ). "Uffbasse: lv_n = Length of the word
+    DATA lt_word TYPE TABLE OF ts_symbol_list.
+    DO lv_n TIMES.
+      DATA(ls_symbol) = VALUE ts_symbol_list( symbol = substring( val = io_word_to_check off = sy-index - 1 len = 1 ) ).
+      APPEND ls_symbol TO lt_word.
     ENDDO.
 
     "Get productions and remove shit
-    LOOP AT gt_productions INTO ls_production_global.
+    DATA:
+          lt_productions TYPE HASHED TABLE OF ts_production
+            WITH UNIQUE KEY primary_key COMPONENTS generates nonterminal
+            WITH NON-UNIQUE SORTED KEY secondary_key COMPONENTS generates,
+          ls_production TYPE ts_production.
+
+    LOOP AT gt_productions INTO DATA(ls_production_global).
       IF ls_production_global IS NOT INITIAL.
         MOVE-CORRESPONDING ls_production_global TO ls_production.
         INSERT ls_production INTO TABLE lt_productions.
@@ -459,12 +451,14 @@ MODULE screen_0100_user_command INPUT.
     ENDLOOP.
 
     "Initialize pyramid
-    lv_line = 0.
-    lv_column = 0.
-    DO lv_word_length TIMES.
-      DO lv_word_length TIMES.
-        ls_pyramid_line-line = lv_line.
-        ls_pyramid_line-column = lv_column.
+    DATA:
+          lt_pyramid TYPE TABLE OF ts_matrix,
+          ls_pyramid_line TYPE ts_matrix.
+    DATA(lv_line) = 0.
+    DATA(lv_column) = 0.
+    DO lv_n TIMES.
+      DO lv_n TIMES.
+        ls_pyramid_line = VALUE #( line = lv_line column = lv_column ).
         APPEND ls_pyramid_line TO lt_pyramid.
         lv_column = lv_column + 1.
       ENDDO.
@@ -472,27 +466,80 @@ MODULE screen_0100_user_command INPUT.
       lv_line = lv_line + 1.
     ENDDO.
 
-    CLEAR ls_word.
+    CLEAR ls_symbol.
 
     "Fill bottom line of pyramid
-    lv_count = 1.
-    LOOP AT lt_pyramid ASSIGNING <fs_pyramid_line> WHERE column = 0.
-      READ TABLE lt_word INDEX lv_count INTO ls_word.
-      LOOP AT lt_productions ASSIGNING <fs_production> USING KEY secondary_key WHERE generates = ls_word-symbol.
-        ls_nonterminal-symbol = <fs_production>-nonterminal.
-        APPEND ls_nonterminal TO <fs_pyramid_line>-values.
+    DATA(lv_i) = 0.
+    WHILE lv_i LE lv_n - 1.
+      "Get next symbol in word to check
+      READ TABLE lt_word INDEX lv_i + 1 INTO ls_symbol.
+      "Get all nonterminals generating the respective symbol
+      LOOP AT lt_productions ASSIGNING FIELD-SYMBOL(<fs_production>) USING KEY secondary_key WHERE generates = ls_symbol-symbol.
+        DATA(ls_nonterminal) = VALUE ts_symbol_list( symbol = <fs_production>-nonterminal ).
+        APPEND ls_nonterminal TO lt_wa.
       ENDLOOP.
-      lv_count = lv_count + 1.
-    ENDLOOP.
+      "Write the nonterminals to the pyramid
+      READ TABLE lt_pyramid WITH KEY line = lv_i column = lv_i ASSIGNING FIELD-SYMBOL(<fs_pyramid_line>).
+      APPEND LINES OF lt_wa TO <fs_pyramid_line>-values.
+      CLEAR lt_wa.
+      lv_i = lv_i + 1.
+    ENDWHILE.
 
-    lv_count = 0.
+    "Do the rest
+    DATA(lv_k) = 2.
+    WHILE lv_k LE lv_n.
+      lv_i = 0.
+      WHILE lv_i LE lv_n - lv_k.
+        CLEAR lt_wa.
+        DATA(lv_m) = lv_i + 1.
+        WHILE lv_m LE lv_i + lv_k - 1.
+          "Get D[i,m] (lt_d1) and D[m, i+k] (lt_d2)
+          READ TABLE lt_pyramid WITH KEY line = lv_i column = lv_m - 1 INTO DATA(ls_d1).
+          READ TABLE lt_pyramid WITH KEY line = lv_m column = lv_i + lv_k - 1 INTO DATA(ls_d2).
+          "Compute all combinations of nonterminals in D[i,m] and D[m, i+k]
+          LOOP AT ls_d1-values ASSIGNING FIELD-SYMBOL(<fs_d1>).
+            LOOP AT ls_d2-values ASSIGNING FIELD-SYMBOL(<fs_d2>).
+              CONCATENATE <fs_d1> <fs_d2> INTO DATA(lv_combination).
+              "Get all nonterminals generating lv_combination
+              LOOP AT lt_productions ASSIGNING <fs_production> USING KEY secondary_key WHERE generates = lv_combination.
+                ls_nonterminal = VALUE ts_symbol_list( symbol = <fs_production>-nonterminal ).
+                APPEND ls_nonterminal TO lt_wa.
+                CLEAR ls_nonterminal.
+              ENDLOOP.
+            ENDLOOP.
+          ENDLOOP.
+          "Write the nonterminals to the pyramid
+          READ TABLE lt_pyramid WITH KEY line = lv_i column = lv_i + lv_k - 1 ASSIGNING <fs_pyramid_line>.
+          APPEND LINES OF lt_wa TO <fs_pyramid_line>-values.
+          lv_m = lv_m + 1.
+        ENDWHILE.
+        lv_i = lv_i + 1.
+      ENDWHILE.
+      lv_k = lv_k + 1.
+    ENDWHILE.
+
+    "View result
+    READ TABLE lt_pyramid WITH KEY line = 0 column = lv_n - 1 ASSIGNING <fs_pyramid_line>.
+    READ TABLE <fs_pyramid_line>-values WITH KEY symbol = gs_grammar-io_start_symbol TRANSPORTING NO FIELDS.
+    DATA lv_message TYPE string.
+    IF sy-subrc = 0.
+      CONCATENATE io_word_to_check ' is in the language.' INTO lv_message.
+    ELSE.
+      CONCATENATE io_word_to_check ' is not in the language.' INTO lv_message.
+    ENDIF.
+
+    CALL FUNCTION 'POPUP_TO_CONFIRM'
+      EXPORTING
+        text_question = lv_message
+        display_cancel_button = abap_false.
 
     "Clear everything
     CLEAR:
       lt_word,
       lt_terminals,
       lt_productions,
-      lt_pyramid.
+      lt_pyramid,
+      lt_wa.
 
   ENDCASE.
 ENDMODULE.
